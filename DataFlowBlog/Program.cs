@@ -13,19 +13,24 @@ namespace DataFlowBlog
     {
         static void Main(string[] args)
         {
+            // Create a list of lists, comprising of [1,1,1,1,1], [2,2,2,2,2] etc.
             var batchedNumbers = new List<List<int>>();
 
-            var numbers = Enumerable.Range(1, 10).ToList();
-
-            for (var i=0; i < 10; i++)
+            for (var i=0; i < 5; i++)
             {
-                batchedNumbers.Add(numbers);
+                batchedNumbers.Add(Enumerable.Repeat(i, 5).ToList());
             }
-
-            // We now have a list of 10 lists of the numbers 1 to 10 (stick with me)
-
-            var separateNumbers = new TransformManyBlock<IList<int>, int>(l => l);
-
+            
+            // Seperates each list it is passed into its individual elements and adds each result to the output
+            var separateNumbers = new TransformManyBlock<IList<int>, int>(
+                l => l,
+                new ExecutionDataflowBlockOptions
+                    {
+                        MaxDegreeOfParallelism = Environment.ProcessorCount,
+                        SingleProducerConstrained = true
+                    });
+            
+            // Takes an int and transforms it into an output string, and adds that string to the output
             var transformNumbers = new TransformBlock<int, string>(
                 n =>
                     {
@@ -33,24 +38,39 @@ namespace DataFlowBlog
 
                         return outputString;
                     },
-                new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = Environment.ProcessorCount });
+                new ExecutionDataflowBlockOptions
+                    {
+                        MaxDegreeOfParallelism = Environment.ProcessorCount,
+                        SingleProducerConstrained = true
+                    });
 
+            // Takes a string and writes it out to the console
             var outputNumbers = new ActionBlock<string>(
                 s => { Console.WriteLine(s); },
-                new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = Environment.ProcessorCount });
+                new ExecutionDataflowBlockOptions
+                    {
+                        MaxDegreeOfParallelism = Environment.ProcessorCount,
+                        SingleProducerConstrained = true
+                    });
 
+            // Link the dataflow blocks together
             separateNumbers.LinkTo(transformNumbers, new DataflowLinkOptions { PropagateCompletion = true });
             transformNumbers.LinkTo(outputNumbers, new DataflowLinkOptions { PropagateCompletion = true });
 
+            // Post each batch of numbers to the start of the dataflow
+            // Here Post is used because there is no limit to the size of the input buffers, and using SendAsync would involve extra complexity
             foreach (List<int> batch in batchedNumbers)
             {
                 separateNumbers.Post(batch);
             }
 
+            // Complete the first block in the chain as the last input data has been sent
             separateNumbers.Complete();
 
-            
+            // Wait for the final block to complete, as the completion is propagated down through the dataflow
             outputNumbers.Completion.Wait();
+
+            Console.ReadKey();
         }
     }
 }
